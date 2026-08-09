@@ -5734,19 +5734,49 @@ public async uplinkWinds(forPlan: FlightPlanIndex, sentCallback = () => {}): Pro
       const flightLevels = propagatedWinds.map((wind) => Math.round(wind.altitude / 100));
 
       if (flightLevels.length === 0) {
-        if (cruiseLevel !== null) {
+        const maxCruiseWindLevels = A330AircraftConfig.fpmConfig.NUM_CRUISE_WIND_LEVELS;
+        const cruiseWindLevelStep = 20;
+        const maxAutomaticCruiseWindLevel = 390;
+
+        if (cruiseLevel !== null && maxCruiseWindLevels > 0) {
           flightLevels.push(cruiseLevel);
         }
 
         plan.allLegs.forEach((leg) => {
-          if (isLeg(leg) && leg.cruiseStep !== undefined) {
+          if (isLeg(leg) && leg.cruiseStep !== undefined && !leg.cruiseStep.isIgnored) {
             const cruiseStep = Math.round(leg.cruiseStep.toAltitude / 100);
 
-            if (flightLevels.length < 4 && cruiseStep !== cruiseLevel && !flightLevels.includes(cruiseStep)) {
+            if (
+              flightLevels.length < maxCruiseWindLevels &&
+              cruiseStep !== cruiseLevel &&
+              !flightLevels.includes(cruiseStep)
+            ) {
               flightLevels.push(cruiseStep);
             }
           }
         });
+
+        if (cruiseLevel !== null) {
+          for (
+            let flightLevel = cruiseLevel + cruiseWindLevelStep;
+            flightLevel <= maxAutomaticCruiseWindLevel && flightLevels.length < maxCruiseWindLevels;
+            flightLevel += cruiseWindLevelStep
+          ) {
+            if (!flightLevels.includes(flightLevel)) {
+              flightLevels.push(flightLevel);
+            }
+          }
+
+          for (
+            let flightLevel = cruiseLevel - cruiseWindLevelStep;
+            flightLevel > 0 && flightLevels.length < maxCruiseWindLevels;
+            flightLevel -= cruiseWindLevelStep
+          ) {
+            if (!flightLevels.includes(flightLevel)) {
+              flightLevels.push(flightLevel);
+            }
+          }
+        }
       }
 
       cruiseWinds = {
