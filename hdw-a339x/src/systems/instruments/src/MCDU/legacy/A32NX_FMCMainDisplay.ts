@@ -2127,7 +2127,6 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
       if (value >= 0) {
         if (value < 1000) {
           this.flightPlanService.setPerformanceData('costIndex', value, forPlan);
-          this.updateManagedSpeeds();
           return true;
         } else {
           this.setScratchpadMessage(NXSystemMessages.entryOutOfRange);
@@ -5485,11 +5484,12 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
     // We invalidate because we don't want to show the old active plan predictions on the newly activated secondary plan.
     this.guidanceController?.vnavDriver?.invalidateFlightPlanProfile();
 
+    this.connectPerfDataToSimvars();
+
     const flightNumber = this.flightPlanService.active?.flightNumber.get();
     if (this.flightPlanService.hasActive && flightNumber !== null) {
       await this.onActiveFlightNumberChanged(flightNumber);
     }
-    this.connectPerfDataToSimvars();
   }
 
   private connectPerfDataToSimvars() {
@@ -5502,6 +5502,7 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
 
     const activePlan = this.flightPlanService.active;
 
+    this.subscriptions.push(activePlan.performanceData.costIndex.sub(() => this.updateManagedSpeeds(), true));
     this.subscriptions.push(
       activePlan.performanceData.v1.sub((v1) => SimVar.SetSimVarValue('L:AIRLINER_V1_SPEED', 'knots', v1 ?? 0), true),
     );
