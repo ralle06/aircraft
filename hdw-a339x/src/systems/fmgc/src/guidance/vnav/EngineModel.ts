@@ -68,28 +68,23 @@ export class EngineModel {
     const c1 = Math.max(1, c - 1);
     const c2 = Math.min(numCols - 1, c);
 
+    const getThrustAtJ = (row: number) =>
+      c1 === c2
+        ? table[row][c1]
+        : Common.interpolate(j, table[0][c1], table[0][c2], table[row][c1], table[row][c2]);
+
     let r: number;
     for (r = 1; r < numRows; r++) {
-      if (table[r][c1] > result) {
+      if (getThrustAtJ(r) > result) {
         break;
       }
     }
     const r1 = Math.max(1, r - 1);
     const r2 = Math.min(numRows - 1, r);
-    for (r = 1; r < numRows; r++) {
-      if (table[r][c2] > result) {
-        break;
-      }
-    }
-    const r3 = Math.max(1, r - 1);
-    const r4 = Math.min(numRows - 1, r);
 
-    const interpolatedRowAtC1 =
-      r1 === r2 ? table[r1][0] : Common.interpolate(result, table[r1][c1], table[r2][c1], table[r1][0], table[r2][0]);
-    const interpolatedRowAtC2 =
-      r3 === r4 ? table[r3][0] : Common.interpolate(result, table[r3][c2], table[r4][c2], table[r3][0], table[r4][0]);
-
-    return Common.interpolate(j, table[0][c1], table[0][c2], interpolatedRowAtC1, interpolatedRowAtC2);
+    return r1 === r2
+      ? table[r1][0]
+      : Common.interpolate(result, getThrustAtJ(r1), getThrustAtJ(r2), table[r1][0], table[r2][0]);
   }
 
   /**
