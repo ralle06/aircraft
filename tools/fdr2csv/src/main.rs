@@ -12,16 +12,32 @@ mod a333x;
 mod a333x_headers;
 mod a339x;
 mod a339x_headers;
-mod su95x;
-mod su95x_headers;
 mod csv_header_serializer;
 mod error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AircraftType {
     A333X,
     A339X,
-    SU95X,
+}
+
+fn aircraft_for_version(version: u64) -> Result<AircraftType, Error> {
+    match version {
+        1000001 => Err(Error::new(
+            ErrorKind::Unsupported,
+            "SU95 interface 1000001 is unavailable because its genuine generated headers are not present in this checkout",
+        )),
+        a333x::INTERFACE_VERSION => Ok(AircraftType::A333X),
+        a339x::INTERFACE_VERSION => Ok(AircraftType::A339X),
+        3390005 => Err(Error::new(
+            ErrorKind::Unsupported,
+            "legacy A339 interface 3390005 has no verifiable schema in this checkout",
+        )),
+        _ => Err(Error::new(
+            ErrorKind::Unsupported,
+            format!("unsupported FDR interface version {version}"),
+        )),
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -86,16 +102,9 @@ fn main() -> Result<(), std::io::Error> {
 
     // Read file version
     let file_format_version = read_bytes::<u64>(&mut reader)?;
-    let aircraft_type = if file_format_version > a339x::INTERFACE_MIN_VERSION {
-        AircraftType::A339X
-    } else if file_format_version > su95x::INTERFACE_MIN_VERSION {
-        AircraftType::A333X
-    } else {
-        AircraftType::SU95X
-    };
+    let aircraft_type = aircraft_for_version(file_format_version)?;
 
     let aircraft_interface_version = match aircraft_type {
-        AircraftType::SU95X => su95x::INTERFACE_VERSION,
         AircraftType::A333X => a333x::INTERFACE_VERSION,
         AircraftType::A339X => a339x::INTERFACE_VERSION,
     };
@@ -110,7 +119,8 @@ fn main() -> Result<(), std::io::Error> {
     } else if args.get_raw_input_file_version {
         println!("{}", file_format_version);
         return Ok(());
-    } else if aircraft_interface_version != file_format_version {
+    } else if !args.override_interface_version && aircraft_interface_version != file_format_version
+    {
         return Err(std::io::Error::new(
             ErrorKind::InvalidInput,
             format!(
@@ -139,9 +149,6 @@ fn main() -> Result<(), std::io::Error> {
 
     // Generate and write the header
     let header = match aircraft_type {
-        AircraftType::SU95X => {
-            csv_header_serializer::to_string(&su95x::FdrData::default(), args.delimiter)
-        }
         AircraftType::A333X => {
             csv_header_serializer::to_string(&a333x::FdrData::default(), args.delimiter)
         }
@@ -160,18 +167,6 @@ fn main() -> Result<(), std::io::Error> {
         .from_writer(buf_writer);
 
     match aircraft_type {
-        AircraftType::SU95X => {
-            while let Ok(fdr_data) = su95x::read_record(&mut reader) {
-                writer.serialize(&fdr_data)?;
-
-                counter += 1;
-
-                if counter % 1000 == 0 {
-                    print!("Processed {counter} entries...\r");
-                    std::io::stdout().flush()?;
-                }
-            }
-        }
         AircraftType::A333X => {
             while let Ok(fdr_data) = a333x::read_record(&mut reader) {
                 writer.serialize(&fdr_data)?;
@@ -184,21 +179,59 @@ fn main() -> Result<(), std::io::Error> {
                 }
             }
         }
-        AircraftType::A339X => {
-            while let Ok(fdr_data) = a339x::read_record(&mut reader) {
-                writer.serialize(&fdr_data)?;
-
-                counter += 1;
-
-                if counter % 1000 == 0 {
-                    print!("Processed {counter} entries...\r");
-                    std::io::stdout().flush()?;
-                }
+        AircraftType::A339X => loop {
+            let mut first = [0u8; 1];
+            match reader.read(&mut first) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) => return Err(error),
             }
-        }
+            let mut record_reader = std::io::Cursor::new(first).chain(&mut reader);
+            let fdr_data = a339x::read_record(&mut record_reader).map_err(|error| {
+                if error.kind() == ErrorKind::UnexpectedEof {
+                    Error::new(
+                        ErrorKind::UnexpectedEof,
+                        format!("truncated A339 record after {counter} complete records"),
+                    )
+                } else {
+                    error
+                }
+            })?;
+            writer.serialize(&fdr_data)?;
+
+            counter += 1;
+
+            if counter % 1000 == 0 {
+                print!("Processed {counter} entries...\r");
+                std::io::stdout().flush()?;
+            }
+        },
     }
 
     println!("Processed {counter} entries...");
 
     Result::Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatches_only_verified_versions() {
+        assert_eq!(aircraft_for_version(3300005).unwrap(), AircraftType::A339X);
+        assert_eq!(aircraft_for_version(3330001).unwrap(), AircraftType::A333X);
+        assert_eq!(
+            aircraft_for_version(1000001).unwrap_err().kind(),
+            ErrorKind::Unsupported
+        );
+        assert_eq!(
+            aircraft_for_version(3390005).unwrap_err().kind(),
+            ErrorKind::Unsupported
+        );
+        assert_eq!(
+            aircraft_for_version(42).unwrap_err().kind(),
+            ErrorKind::Unsupported
+        );
+    }
 }
