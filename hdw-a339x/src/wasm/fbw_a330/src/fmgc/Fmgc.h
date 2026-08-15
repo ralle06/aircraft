@@ -15,6 +15,8 @@ class Fmgc {
 
   const fmgc_outputs& getDebugOutputs() const;
 
+  const FmgcComputer::FinalModeDiagnostics& getFinalModeDiagnostics() const;
+
   FmgcComputer::ExternalInputs_FmgcComputer_T modelInputs = {};
 
  private:

@@ -145,3 +145,7 @@ base_fmgc_bus_outputs Fmgc::getBusOutputs() {
 const fmgc_outputs& Fmgc::getDebugOutputs() const {
   return fmgcComputer.getExternalOutputs().out;
 }
+
+const FmgcComputer::FinalModeDiagnostics& Fmgc::getFinalModeDiagnostics() const {
+  return fmgcComputer.getFinalModeDiagnostics();
+}

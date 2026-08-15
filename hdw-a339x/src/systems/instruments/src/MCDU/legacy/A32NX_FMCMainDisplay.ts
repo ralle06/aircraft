@@ -1474,7 +1474,7 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
   /**
    * Updates performance speeds such as GD, F, S, Vls and approach speeds
    */
-  public updatePerfSpeeds() {
+  public updatePerfSpeeds(useVnavPrediction = true) {
     this.computedVgd = SimVar.GetSimVarValue('L:A32NX_SPEEDS_GD', 'number');
     this.computedVfs = SimVar.GetSimVarValue('L:A32NX_SPEEDS_F', 'number');
     this.computedVss = SimVar.GetSimVarValue('L:A32NX_SPEEDS_S', 'number');
@@ -1484,7 +1484,7 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
     const prediction = this.getFuelPredComputation(FlightPlanIndex.Active);
 
     let weight = prediction.landingWeight;
-    const vnavPrediction = this.guidanceController.vnavDriver.getDestinationPrediction();
+    const vnavPrediction = useVnavPrediction ? this.guidanceController.vnavDriver.getDestinationPrediction() : null;
     // Actual weight is used during approach phase (FCOM bulletin 46/2), and we also assume during go-around
     // Fallback gross weight set to 181.0T (MZFW), which is replaced by FMGW once input in FMS to avoid function returning undefined results.
     if (this.flightPhaseManager.phase >= FmgcFlightPhase.Approach || !Number.isFinite(weight)) {
@@ -1691,7 +1691,7 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
     }
   }
 
-  private async updateDestinationData() {
+  private updateDestinationData() {
     let landingElevation;
     let latitude;
     let longitude;
@@ -4266,21 +4266,34 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
     }
   }
 
-  public updateTowerHeadwind() {
-    const activePlan = this.getFlightPlan(FlightPlanIndex.Active);
+  public updateTowerHeadwind(): boolean {
+    // This scalar is keyed by the active plan. Clear it before resolving the
+    // current source so missing or invalid inputs can never leave the previous
+    // plan's component behind.
+    this._towerHeadwind = 0;
 
-    if (
-      Number.isFinite(activePlan.performanceData.approachWindDirection.get()) &&
-      Number.isFinite(activePlan.performanceData.approachWindMagnitude.get())
-    ) {
-      if (activePlan.destinationRunway) {
-        this._towerHeadwind = NXSpeedsUtils.getHeadwind(
-          activePlan.performanceData.approachWindMagnitude.get(),
-          activePlan.performanceData.approachWindDirection.get(),
-          activePlan.destinationRunway.magneticBearing,
-        );
-      }
+    const activePlan = this.getFlightPlan(FlightPlanIndex.Active);
+    const approachWindDirection = activePlan.performanceData.approachWindDirection.get();
+    const approachWindMagnitude = activePlan.performanceData.approachWindMagnitude.get();
+
+    // Without a complete entered approach wind, updatePerfSpeeds uses its
+    // existing no-tower-wind fallback and does not consume this scalar.
+    if (!Number.isFinite(approachWindDirection) || !Number.isFinite(approachWindMagnitude)) {
+      return true;
     }
+
+    const runwayBearing = activePlan.destinationRunway?.magneticBearing;
+    if (!Number.isFinite(runwayBearing)) {
+      return false;
+    }
+
+    const towerHeadwind = NXSpeedsUtils.getHeadwind(approachWindMagnitude, approachWindDirection, runwayBearing);
+    if (!Number.isFinite(towerHeadwind)) {
+      return false;
+    }
+
+    this._towerHeadwind = towerHeadwind;
+    return true;
   }
 
   /**
@@ -5278,7 +5291,7 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
         computations.alternateFuel = 0;
         computations.alternateTime = 0;
       } else {
-      const trueCourseToAlternate = bearingTo(
+        const trueCourseToAlternate = bearingTo(
           plan.destinationAirport.location,
           plan.alternateDestinationAirport.location,
         );
@@ -5482,9 +5495,28 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
    */
   private async onActiveFlightPlanChanged(): Promise<void> {
     // We invalidate because we don't want to show the old active plan predictions on the newly activated secondary plan.
-    this.guidanceController?.vnavDriver?.invalidateFlightPlanProfile();
+    const vnavDriver = this.guidanceController?.vnavDriver;
+    const derivedDataGeneration = vnavDriver?.invalidateFlightPlanProfile();
 
     this.connectPerfDataToSimvars();
+
+    let activePlanDerivedDataRefreshComplete = !this.flightPlanService.hasActive;
+    if (this.flightPlanService.hasActive) {
+      // These caches are keyed by the active slot, not by immutable plan identity.
+      // Refresh them synchronously before allowing VNAV to give the replacement
+      // plan ownership of a profile. Do not seed speeds from the invalidated
+      // previous-plan VNAV prediction during this ownership transition.
+      this.updateDestinationData();
+      if (this.updateTowerHeadwind()) {
+        this.runFuelPredComputation(FlightPlanIndex.Active);
+        this.updatePerfSpeeds(false);
+        activePlanDerivedDataRefreshComplete = true;
+      }
+    }
+
+    if (derivedDataGeneration !== undefined && activePlanDerivedDataRefreshComplete) {
+      vnavDriver.completeActivePlanDerivedDataRefresh(derivedDataGeneration);
+    }
 
     const flightNumber = this.flightPlanService.active?.flightNumber.get();
     if (this.flightPlanService.hasActive && flightNumber !== null) {
@@ -5620,7 +5652,7 @@ export abstract class FMCMainDisplay implements FmsDataInterface, FmsDisplayInte
     this.bus.pub('troubleshooting_log_error', String(msg), true, false);
   }
 
-public async uplinkWinds(forPlan: FlightPlanIndex, sentCallback = () => {}): Promise<void> {
+  public async uplinkWinds(forPlan: FlightPlanIndex, sentCallback = () => {}): Promise<void> {
     const plan = this.getFlightPlan(forPlan);
     if (!plan) {
       throw new Error(`Flight plan ${forPlan} does not exist.`);

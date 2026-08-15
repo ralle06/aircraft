@@ -929,6 +929,7 @@ FmgcComputer::Parameters_FmgcComputer_T FmgcComputer::FmgcComputer_P{
         false,
         false,
         false,
+        false,
         0.0,
         fmgc_des_submode::None,
         0.0,

@@ -12,6 +12,124 @@
 
 using namespace mINI;
 
+namespace {
+struct FmaVerticalModeState {
+  bool trackMode = false;
+  bool captureMode = false;
+  bool climbMode = false;
+  bool descentMode = false;
+  bool openMode = false;
+  bool expedMode = false;
+  bool vsMode = false;
+  bool fpaMode = false;
+  bool altMode = false;
+  bool dashMode = false;
+  bool altConstraintValid = false;
+  bool finalDesMode = false;
+  bool lateralNavMode = false;
+  bool gsMode = false;
+  bool gsCaptureMode = false;
+  bool gsTrackMode = false;
+  bool landMode = false;
+  bool flareMode = false;
+  bool rollOutMode = false;
+  bool pitchTakeoffMode = false;
+  bool pitchGoaroundMode = false;
+  bool tcasMode = false;
+};
+
+constexpr int selectFmaVerticalMode(const FmaVerticalModeState& mode) {
+  // Lateral NAV deliberately does not gate the active longitudinal FINAL law.
+  static_cast<void>(mode.lateralNavMode);
+
+  if (mode.trackMode && mode.altMode && !mode.dashMode && !mode.altConstraintValid) {
+    return 10;
+  } else if (mode.captureMode && mode.altMode && !mode.dashMode && !mode.altConstraintValid) {
+    return 11;
+  } else if (mode.climbMode && (mode.openMode || mode.expedMode)) {
+    return 12;
+  } else if (mode.descentMode && (mode.openMode || mode.expedMode)) {
+    return 13;
+  } else if (mode.vsMode) {
+    return 14;
+  } else if (mode.fpaMode) {
+    return 15;
+  } else if (mode.trackMode && mode.altMode && !mode.dashMode && mode.altConstraintValid) {
+    return 20;
+  } else if (mode.captureMode && mode.altMode && !mode.dashMode && mode.altConstraintValid) {
+    return 21;
+  } else if (mode.climbMode && !mode.openMode) {
+    return 22;
+  } else if (mode.descentMode && !mode.openMode) {
+    return 23;
+  } else if (mode.gsMode && mode.gsCaptureMode) {
+    return 30;
+  } else if (mode.gsMode && mode.gsTrackMode) {
+    return 31;
+  } else if (mode.landMode) {
+    return 32;
+  } else if (mode.flareMode) {
+    return 33;
+  } else if (mode.rollOutMode) {
+    return 34;
+  } else if (mode.pitchTakeoffMode) {
+    return 40;
+  } else if (mode.pitchGoaroundMode) {
+    return 41;
+  } else if (mode.tcasMode) {
+    return 50;
+  } else if (mode.finalDesMode) {
+    return 24;
+  }
+
+  return 0;
+}
+
+constexpr fmgc_approach_type selectFmgcApproachType(double approachFamily) {
+  if (approachFamily == static_cast<double>(fmgc_approach_type::ILS)) {
+    return fmgc_approach_type::ILS;
+  }
+  if (approachFamily == static_cast<double>(fmgc_approach_type::RNAV)) {
+    return fmgc_approach_type::RNAV;
+  }
+
+  return fmgc_approach_type::None;
+}
+
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .lateralNavMode = true}) == 24);
+static_assert(selectFmaVerticalMode({.trackMode = true, .altMode = true}) == 10);
+static_assert(selectFmaVerticalMode({.captureMode = true, .altMode = true}) == 11);
+static_assert(selectFmaVerticalMode({.climbMode = true, .openMode = true}) == 12);
+static_assert(selectFmaVerticalMode({.descentMode = true, .openMode = true}) == 13);
+static_assert(selectFmaVerticalMode({.vsMode = true}) == 14);
+static_assert(selectFmaVerticalMode({.fpaMode = true}) == 15);
+static_assert(selectFmaVerticalMode({.trackMode = true, .altMode = true, .altConstraintValid = true}) == 20);
+static_assert(selectFmaVerticalMode({.captureMode = true, .altMode = true, .altConstraintValid = true}) == 21);
+static_assert(selectFmaVerticalMode({.climbMode = true}) == 22);
+static_assert(selectFmaVerticalMode({.descentMode = true}) == 23);
+static_assert(selectFmaVerticalMode({.gsMode = true, .gsCaptureMode = true}) == 30);
+static_assert(selectFmaVerticalMode({.gsMode = true, .gsTrackMode = true}) == 31);
+static_assert(selectFmaVerticalMode({.landMode = true}) == 32);
+static_assert(selectFmaVerticalMode({.flareMode = true}) == 33);
+static_assert(selectFmaVerticalMode({.rollOutMode = true}) == 34);
+static_assert(selectFmaVerticalMode({.pitchTakeoffMode = true}) == 40);
+static_assert(selectFmaVerticalMode({.pitchGoaroundMode = true}) == 41);
+static_assert(selectFmaVerticalMode({.tcasMode = true}) == 50);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .gsMode = true, .gsCaptureMode = true}) == 30);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .gsMode = true, .gsTrackMode = true}) == 31);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .landMode = true}) == 32);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .flareMode = true}) == 33);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .rollOutMode = true}) == 34);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .pitchTakeoffMode = true}) == 40);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .pitchGoaroundMode = true}) == 41);
+static_assert(selectFmaVerticalMode({.finalDesMode = true, .tcasMode = true}) == 50);
+static_assert(selectFmgcApproachType(0) == fmgc_approach_type::None);
+static_assert(selectFmgcApproachType(1) == fmgc_approach_type::ILS);
+static_assert(selectFmgcApproachType(2) == fmgc_approach_type::RNAV);
+static_assert(selectFmgcApproachType(-1) == fmgc_approach_type::None);
+static_assert(selectFmgcApproachType(3) == fmgc_approach_type::None);
+}  // namespace
+
 bool FlyByWireInterface::connect() {
   // setup local variables
   setupLocalVariables();
@@ -399,9 +517,33 @@ void FlyByWireInterface::setupLocalVariables() {
   idFmRequestedVerticalMode = std::make_unique<LocalVariable>("A32NX_FG_REQUESTED_VERTICAL_MODE");
   idFmTargetAltitude = std::make_unique<LocalVariable>("A32NX_FG_TARGET_ALTITUDE");
   idFmTargetVerticalSpeed = std::make_unique<LocalVariable>("A32NX_FG_TARGET_VERTICAL_SPEED");
-  idFmRnavAppSelected = std::make_unique<LocalVariable>("A32NX_FG_RNAV_APP_SELECTED");
+  idFmApproachFamily = std::make_unique<LocalVariable>("A32NX_FG_APPROACH_FAMILY");
   idFmFinalCanEngage = std::make_unique<LocalVariable>("A32NX_FG_FINAL_CAN_ENGAGE");
+  idFmFinalSustainValid = std::make_unique<LocalVariable>("A32NX_FG_FINAL_SUSTAIN_VALID");
   idFmNavCaptureCondition = std::make_unique<LocalVariable>("A32NX_FM1_NAV_CAPTURE_CONDITION");
+
+  idDebugFinalCanEngageLive = std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_CAN_ENGAGE_LIVE");
+  idDebugFinalSustainValidLive = std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_SUSTAIN_VALID_LIVE");
+  idDebugFinalArmedLive = std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_ARMED_LIVE");
+  idDebugFinalActiveLive = std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_ACTIVE_LIVE");
+  idDebugNavArmedLive = std::make_unique<LocalVariable>("A339X_DEBUG_NAV_ARMED_LIVE");
+  idDebugNavActiveLive = std::make_unique<LocalVariable>("A339X_DEBUG_NAV_ACTIVE_LIVE");
+  idDebugNavCaptureConditionLive = std::make_unique<LocalVariable>("A339X_DEBUG_NAV_CAPTURE_CONDITION_LIVE");
+  idDebugCommonModeResetLive = std::make_unique<LocalVariable>("A339X_DEBUG_COMMON_MODE_RESET_LIVE");
+  idDebugApproachPushLive = std::make_unique<LocalVariable>("A339X_DEBUG_APPR_PUSH_LIVE");
+  idDebugFinalArmedLastResetReason =
+      std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_ARMED_LAST_RESET_REASON");
+  idDebugFinalActiveLastResetReason =
+      std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_ACTIVE_LAST_RESET_REASON");
+  idDebugNavActiveLastResetReason =
+      std::make_unique<LocalVariable>("A339X_DEBUG_NAV_ACTIVE_LAST_RESET_REASON");
+  idDebugFinalArmedLastResetFmgc =
+      std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_ARMED_LAST_RESET_FMGC");
+  idDebugFinalActiveLastResetFmgc =
+      std::make_unique<LocalVariable>("A339X_DEBUG_FINAL_ACTIVE_LAST_RESET_FMGC");
+  idDebugNavActiveLastResetFmgc =
+      std::make_unique<LocalVariable>("A339X_DEBUG_NAV_ACTIVE_LAST_RESET_FMGC");
+  idDebugFmgcPriorityIndex = std::make_unique<LocalVariable>("A339X_DEBUG_FMGC_PRIORITY_INDEX");
 
   idTcasFault = std::make_unique<LocalVariable>("A32NX_TCAS_FAULT");
   idTcasMode = std::make_unique<LocalVariable>("A32NX_TCAS_MODE");
@@ -1817,8 +1959,7 @@ bool FlyByWireInterface::updateFmgc(double sampleTime, int fmgcIndex) {
 
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.fm_valid = true;
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.fms_flight_phase = static_cast<fmgc_flight_phase>(idFmgcFlightPhase->get());
-  fmgcs[fmgcIndex].modelInputs.in.fms_inputs.selected_approach_type =
-      idFmRnavAppSelected->get() ? fmgc_approach_type::RNAV : fmgc_approach_type::ILS;
+  fmgcs[fmgcIndex].modelInputs.in.fms_inputs.selected_approach_type = selectFmgcApproachType(idFmApproachFamily->get());
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.backbeam_selected = idFm1BackbeamSelected->get();
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.fms_loc_distance = (simData.nav_dme_valid != 0) ? simData.nav_dme_nmi : 0;
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.fms_unrealistic_gs_angle_deg = (simData.nav_gs_valid != 0) ? -simData.nav_gs_deg : 0;
@@ -1833,6 +1974,7 @@ bool FlyByWireInterface::updateFmgc(double sampleTime, int fmgcIndex) {
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.direct_to_nav_engage = simInputAutopilot.DIR_TO_trigger;
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.vertical_flight_plan_valid = idFmVerticalProfileAvail->get();
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.final_app_can_engage = idFmFinalCanEngage->get();
+  fmgcs[fmgcIndex].modelInputs.in.fms_inputs.final_app_sustain_valid = idFmFinalSustainValid->get();
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.next_alt_cstr_ft = idFmgcAltitudeConstraint->get();
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.requested_des_submode = static_cast<fmgc_des_submode>(idFmRequestedVerticalMode->get());
   fmgcs[fmgcIndex].modelInputs.in.fms_inputs.alt_profile_tgt_ft = idFmTargetAltitude->get();
@@ -1995,50 +2137,35 @@ bool FlyByWireInterface::updateFmgcShim(double sampleTime) {
   bool tcasMode = Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_7, 13, false);
 
   bool navMode = Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_2, 12, false);
+  bool landMode = Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_4, 14, false) &&
+                  !Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_1, 25, false) &&
+                  !Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_2, 26, false);
+  bool flareMode = Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_1, 25, false) &&
+                   !Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_2, 26, false);
+  bool rollOutMode = Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_2, 26, false);
 
-  int verticalMode = 0;
-  if (trackMode && altMode && !dashMode && !altConstraintValid) {
-    verticalMode = 10;
-  } else if (captureMode && altMode && !dashMode && !altConstraintValid) {
-    verticalMode = 11;
-  } else if (climbMode && (openMode || expedMode)) {
-    verticalMode = 12;
-  } else if (descentMode && (openMode || expedMode)) {
-    verticalMode = 13;
-  } else if (vsMode) {
-    verticalMode = 14;
-  } else if (fpaMode) {
-    verticalMode = 15;
-  } else if (trackMode && altMode && !dashMode && altConstraintValid) {
-    verticalMode = 20;
-  } else if (captureMode && altMode && !dashMode && altConstraintValid) {
-    verticalMode = 21;
-  } else if (climbMode && !openMode) {
-    verticalMode = 22;
-  } else if (descentMode && !openMode) {
-    verticalMode = 23;
-  } else if (finalDesMode && !navMode) {
-    verticalMode = 24;
-  } else if (gsMode && gsCaptureMode) {
-    verticalMode = 30;
-  } else if (gsMode && gsTrackMode) {
-    verticalMode = 31;
-  } else if (Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_4, 14, false) &&
-             !Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_1, 25, false) &&
-             !Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_2, 26, false)) {
-    verticalMode = 32;
-  } else if (Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_1, 25, false) &&
-             !Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_2, 26, false)) {
-    verticalMode = 33;
-  } else if (Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_2, 26, false)) {
-    verticalMode = 34;
-  } else if (pitchTakeoffMode) {
-    verticalMode = 40;
-  } else if (pitchGoaroundMode) {
-    verticalMode = 41;
-  } else if (tcasMode) {
-    verticalMode = 50;
-  }
+  int verticalMode = selectFmaVerticalMode({.trackMode = trackMode,
+                                            .captureMode = captureMode,
+                                            .climbMode = climbMode,
+                                            .descentMode = descentMode,
+                                            .openMode = openMode,
+                                            .expedMode = expedMode,
+                                            .vsMode = vsMode,
+                                            .fpaMode = fpaMode,
+                                            .altMode = altMode,
+                                            .dashMode = dashMode,
+                                            .altConstraintValid = altConstraintValid,
+                                            .finalDesMode = finalDesMode,
+                                            .lateralNavMode = navMode,
+                                            .gsMode = gsMode,
+                                            .gsCaptureMode = gsCaptureMode,
+                                            .gsTrackMode = gsTrackMode,
+                                            .landMode = landMode,
+                                            .flareMode = flareMode,
+                                            .rollOutMode = rollOutMode,
+                                            .pitchTakeoffMode = pitchTakeoffMode,
+                                            .pitchGoaroundMode = pitchGoaroundMode,
+                                            .tcasMode = tcasMode});
 
   bool altArmed = Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_3, 12, false);
   bool clbArmed = Arinc429Utils::bitFromValueOr(fmgcsBusOutputs[fmgcPriorityIndex].fmgc_a_bus.discrete_word_3, 24, false);
@@ -2112,6 +2239,33 @@ bool FlyByWireInterface::updateFmgcShim(double sampleTime) {
   idAutothrustShimStatus->set(athrStatus);
   idAutothrustShimMode->set(athrMode);
   idAutothrustShimModeMessage->set(athrModeMessage);
+
+  const auto& finalModeDiagnostics = fmgcs[fmgcPriorityIndex].getFinalModeDiagnostics();
+  idDebugFinalCanEngageLive->set(fmgcs[fmgcPriorityIndex].modelInputs.in.fms_inputs.final_app_can_engage);
+  idDebugFinalSustainValidLive->set(fmgcs[fmgcPriorityIndex].modelInputs.in.fms_inputs.final_app_sustain_valid);
+  idDebugFinalArmedLive->set(finalModeDiagnostics.finalArmed);
+  idDebugFinalActiveLive->set(finalModeDiagnostics.finalActive);
+  idDebugNavArmedLive->set(finalModeDiagnostics.navArmed);
+  idDebugNavActiveLive->set(finalModeDiagnostics.navActive);
+  idDebugNavCaptureConditionLive->set(fmgcs[fmgcPriorityIndex].modelInputs.in.fms_inputs.nav_capture_condition);
+  idDebugCommonModeResetLive->set(finalModeDiagnostics.commonModeReset);
+  idDebugApproachPushLive->set(finalModeDiagnostics.approachPush);
+  if (finalModeDiagnostics.finalArmedResetCount > debugFinalArmedResetCount[fmgcPriorityIndex]) {
+    idDebugFinalArmedLastResetReason->set(finalModeDiagnostics.finalArmedLastResetReason);
+    idDebugFinalArmedLastResetFmgc->set(fmgcPriorityIndex + 1);
+  }
+  debugFinalArmedResetCount[fmgcPriorityIndex] = finalModeDiagnostics.finalArmedResetCount;
+  if (finalModeDiagnostics.finalActiveResetCount > debugFinalActiveResetCount[fmgcPriorityIndex]) {
+    idDebugFinalActiveLastResetReason->set(finalModeDiagnostics.finalActiveLastResetReason);
+    idDebugFinalActiveLastResetFmgc->set(fmgcPriorityIndex + 1);
+  }
+  debugFinalActiveResetCount[fmgcPriorityIndex] = finalModeDiagnostics.finalActiveResetCount;
+  if (finalModeDiagnostics.navActiveResetCount > debugNavActiveResetCount[fmgcPriorityIndex]) {
+    idDebugNavActiveLastResetReason->set(finalModeDiagnostics.navActiveLastResetReason);
+    idDebugNavActiveLastResetFmgc->set(fmgcPriorityIndex + 1);
+  }
+  debugNavActiveResetCount[fmgcPriorityIndex] = finalModeDiagnostics.navActiveResetCount;
+  idDebugFmgcPriorityIndex->set(fmgcPriorityIndex);
 
   // debug variables for flare law
   idDevelopmentAutoland_H_dot_fpm->set(fmgcs[0].getDebugOutputs().ap_fd_outer_loops.flare_law.H_dot_radio_fpm);

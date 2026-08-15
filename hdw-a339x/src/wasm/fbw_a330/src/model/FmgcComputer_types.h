@@ -256,6 +256,7 @@ struct base_fms_inputs
   boolean_T direct_to_nav_engage;
   boolean_T vertical_flight_plan_valid;
   boolean_T final_app_can_engage;
+  boolean_T final_app_sustain_valid;
   real_T next_alt_cstr_ft;
   fmgc_des_submode requested_des_submode;
   real_T alt_profile_tgt_ft;

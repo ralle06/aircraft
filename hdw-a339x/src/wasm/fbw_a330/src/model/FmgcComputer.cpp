@@ -6,6 +6,166 @@
 #include "look1_binlxpw.h"
 #include "FmgcOuterLoops.h"
 
+// HEADWIND OVERRIDE: the writable repository contains only generated FMGC C++
+// output, with no model source or post-generation patch mechanism. Preserve this
+// minimal FINAL lifecycle override if the model output is regenerated.
+namespace {
+enum FinalArmedResetReason : uint32_T {
+  FinalArmedResetCapture = 1U << 0,
+  FinalArmedResetGoAround = 1U << 1,
+  FinalArmedResetVerticalProfileInvalid = 1U << 2,
+  FinalArmedResetNavFallingEdge = 1U << 3,
+  FinalArmedResetApproachPush = 1U << 4,
+  FinalArmedResetLocalizerPush = 1U << 5,
+  FinalArmedResetCommonMode = 1U << 6,
+  FinalArmedResetTcas = 1U << 7,
+};
+
+enum FinalActiveResetReason : uint32_T {
+  FinalActiveResetCommonMode = 1U << 0,
+  FinalActiveResetCompetingLongitudinalMode = 1U << 1,
+  FinalActiveResetVerticalProfileInvalid = 1U << 2,
+  FinalActiveResetSustainValidityLost = 1U << 3,
+  FinalActiveResetWrongApproachFamily = 1U << 4,
+  FinalActiveResetWrongFlightPhase = 1U << 5,
+  FinalActiveResetApproachDeselected = 1U << 6,
+};
+
+enum NavActiveResetReason : uint32_T {
+  NavActiveResetLateralFlightPlanInvalid = 1U << 0,
+  NavActiveResetCommonMode = 1U << 1,
+  NavActiveResetCompetingLateralMode = 1U << 2,
+  NavActiveResetCaptureReversion = 1U << 3,
+  NavActiveResetFallingFinalReversion = 1U << 4,
+};
+
+struct FinalArmedResetInputs {
+  boolean_T capture = false;
+  boolean_T goAround = false;
+  boolean_T verticalProfileInvalid = false;
+  boolean_T navFallingEdge = false;
+  boolean_T approachPush = false;
+  boolean_T localizerPush = false;
+  boolean_T commonModeReset = false;
+  boolean_T tcas = false;
+};
+
+struct FinalActiveResetInputs {
+  boolean_T commonModeReset = false;
+  boolean_T competingLongitudinalMode = false;
+  boolean_T verticalProfileInvalid = false;
+  boolean_T sustainValidityLost = false;
+  boolean_T wrongApproachFamily = false;
+  boolean_T wrongFlightPhase = false;
+  boolean_T approachDeselected = false;
+};
+
+struct NavActiveResetInputs {
+  boolean_T lateralFlightPlanInvalid = false;
+  boolean_T commonModeReset = false;
+  boolean_T competingLateralMode = false;
+};
+
+constexpr uint32_T finalArmedResetReason(const FinalArmedResetInputs& inputs) {
+  return (inputs.capture ? FinalArmedResetCapture : 0U) |
+         (inputs.goAround ? FinalArmedResetGoAround : 0U) |
+         (inputs.verticalProfileInvalid ? FinalArmedResetVerticalProfileInvalid : 0U) |
+         (inputs.navFallingEdge ? FinalArmedResetNavFallingEdge : 0U) |
+         (inputs.approachPush ? FinalArmedResetApproachPush : 0U) |
+         (inputs.localizerPush ? FinalArmedResetLocalizerPush : 0U) |
+         (inputs.commonModeReset ? FinalArmedResetCommonMode : 0U) |
+         (inputs.tcas ? FinalArmedResetTcas : 0U);
+}
+
+constexpr uint32_T finalActiveResetReason(const FinalActiveResetInputs& inputs) {
+  return (inputs.commonModeReset ? FinalActiveResetCommonMode : 0U) |
+         (inputs.competingLongitudinalMode ? FinalActiveResetCompetingLongitudinalMode : 0U) |
+         (inputs.verticalProfileInvalid ? FinalActiveResetVerticalProfileInvalid : 0U) |
+         (inputs.sustainValidityLost ? FinalActiveResetSustainValidityLost : 0U) |
+         (inputs.wrongApproachFamily ? FinalActiveResetWrongApproachFamily : 0U) |
+         (inputs.wrongFlightPhase ? FinalActiveResetWrongFlightPhase : 0U) |
+         (inputs.approachDeselected ? FinalActiveResetApproachDeselected : 0U);
+}
+
+constexpr uint32_T navActiveResetReason(const NavActiveResetInputs& inputs) {
+  return (inputs.lateralFlightPlanInvalid ? NavActiveResetLateralFlightPlanInvalid : 0U) |
+         (inputs.commonModeReset ? NavActiveResetCommonMode : 0U) |
+         (inputs.competingLateralMode ? NavActiveResetCompetingLateralMode : 0U);
+}
+
+constexpr uint32_T navActiveReversionReason(boolean_T navCaptureReversion, boolean_T fallingFinalReversion) {
+  return (navCaptureReversion ? NavActiveResetCaptureReversion : 0U) |
+         (fallingFinalReversion ? NavActiveResetFallingFinalReversion : 0U);
+}
+
+constexpr boolean_T isFinalApproachCaptureValid(boolean_T verticalFlightPlanValid, boolean_T finalCanEngage,
+                                                fmgc_approach_type approachType, fmgc_flight_phase flightPhase) {
+  return verticalFlightPlanValid && finalCanEngage && approachType == fmgc_approach_type::RNAV &&
+         flightPhase == fmgc_flight_phase::Approach;
+}
+
+constexpr boolean_T isFinalApproachSustainValid(boolean_T verticalFlightPlanValid, boolean_T finalSustainValid,
+                                                fmgc_approach_type approachType, fmgc_flight_phase flightPhase) {
+  return verticalFlightPlanValid && finalSustainValid && approachType == fmgc_approach_type::RNAV &&
+         flightPhase == fmgc_flight_phase::Approach;
+}
+
+constexpr boolean_T shouldResetFinalApproach(boolean_T finalApproachSustainValid,
+                                             boolean_T finalApproachDeselected) {
+  return !finalApproachSustainValid || finalApproachDeselected;
+}
+
+constexpr boolean_T shouldSetFinalApproach(boolean_T oppositeFmgcFinalActive, boolean_T finalApproachCaptureValid,
+                                           boolean_T localCaptureRequested, boolean_T finalApproachDeselected) {
+  return (oppositeFmgcFinalActive || (finalApproachCaptureValid && localCaptureRequested)) &&
+         !finalApproachDeselected;
+}
+
+static_assert(isFinalApproachCaptureValid(true, true, fmgc_approach_type::RNAV, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachCaptureValid(false, true, fmgc_approach_type::RNAV, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachCaptureValid(true, false, fmgc_approach_type::RNAV, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachCaptureValid(true, true, fmgc_approach_type::ILS, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachCaptureValid(true, true, fmgc_approach_type::None, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachCaptureValid(true, true, fmgc_approach_type::RNAV, fmgc_flight_phase::Goaround));
+static_assert(isFinalApproachSustainValid(true, true, fmgc_approach_type::RNAV, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachSustainValid(false, true, fmgc_approach_type::RNAV, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachSustainValid(true, false, fmgc_approach_type::RNAV, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachSustainValid(true, true, fmgc_approach_type::ILS, fmgc_flight_phase::Approach));
+static_assert(!isFinalApproachSustainValid(true, true, fmgc_approach_type::RNAV, fmgc_flight_phase::Goaround));
+static_assert(shouldResetFinalApproach(true, true));
+static_assert(shouldResetFinalApproach(false, false));
+static_assert(!shouldResetFinalApproach(true, false));
+static_assert(shouldSetFinalApproach(false, true, true, false));
+static_assert(!shouldSetFinalApproach(false, false, true, false));
+static_assert(shouldSetFinalApproach(true, false, false, false),
+              "opposite-FMGC active-state transfer is not a fresh capture");
+static_assert(!shouldSetFinalApproach(true, true, true, true),
+              "armed FINAL plus capture eligibility must not override same-step APPR deselection");
+static_assert(!shouldResetFinalApproach(true, false),
+              "capture-envelope loss must not release persistently valid active FINAL");
+static_assert(finalArmedResetReason({.capture = true}) == FinalArmedResetCapture);
+static_assert(finalArmedResetReason({.goAround = true}) == FinalArmedResetGoAround);
+static_assert(finalArmedResetReason({.verticalProfileInvalid = true}) == FinalArmedResetVerticalProfileInvalid);
+static_assert(finalArmedResetReason({.navFallingEdge = true}) == FinalArmedResetNavFallingEdge);
+static_assert(finalArmedResetReason({.approachPush = true}) == FinalArmedResetApproachPush);
+static_assert(finalArmedResetReason({.localizerPush = true}) == FinalArmedResetLocalizerPush);
+static_assert(finalArmedResetReason({.commonModeReset = true}) == FinalArmedResetCommonMode);
+static_assert(finalArmedResetReason({.tcas = true}) == FinalArmedResetTcas);
+static_assert(finalActiveResetReason({.commonModeReset = true}) == FinalActiveResetCommonMode);
+static_assert(finalActiveResetReason({.competingLongitudinalMode = true}) ==
+              FinalActiveResetCompetingLongitudinalMode);
+static_assert(finalActiveResetReason({.verticalProfileInvalid = true}) == FinalActiveResetVerticalProfileInvalid);
+static_assert(finalActiveResetReason({.sustainValidityLost = true}) == FinalActiveResetSustainValidityLost);
+static_assert(finalActiveResetReason({.wrongApproachFamily = true}) == FinalActiveResetWrongApproachFamily);
+static_assert(finalActiveResetReason({.wrongFlightPhase = true}) == FinalActiveResetWrongFlightPhase);
+static_assert(finalActiveResetReason({.approachDeselected = true}) == FinalActiveResetApproachDeselected);
+static_assert(navActiveResetReason({.lateralFlightPlanInvalid = true}) == NavActiveResetLateralFlightPlanInvalid);
+static_assert(navActiveResetReason({.commonModeReset = true}) == NavActiveResetCommonMode);
+static_assert(navActiveResetReason({.competingLateralMode = true}) == NavActiveResetCompetingLateralMode);
+static_assert(navActiveReversionReason(true, false) == NavActiveResetCaptureReversion);
+static_assert(navActiveReversionReason(false, true) == NavActiveResetFallingFinalReversion);
+}  // namespace
+
 void FmgcComputer::FmgcComputer_MATLABFunction(const base_arinc_429 *rtu_u, real32_T rtu_default, real32_T *rty_y)
 {
   if (rtu_u->SSM == static_cast<uint32_T>(SignStatusMatrix::NormalOperation)) {
@@ -199,6 +359,9 @@ void FmgcComputer::FmgcComputer_MATLABFunction_gy(const boolean_T rtu_u[19], rea
 
 void FmgcComputer::step()
 {
+  finalModeDiagnostics.commonModeReset = false;
+  finalModeDiagnostics.approachPush = false;
+
   fmgc_outputs rtb_BusAssignment_jmp;
   real_T rtb_Phi_loc_c;
   real_T rtb_Theta_c_deg;
@@ -1538,6 +1701,7 @@ void FmgcComputer::step()
       rtb_adrComputationBus_vertical_speed_ft_min_Data;
     apCondition = rtb_y_m;
     rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset = rtb_AND10_b;
+    finalModeDiagnostics.commonModeReset = rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset;
     FmgcComputer_MATLABFunction_i(&FmgcComputer_U.in.bus_inputs.tcas_bus.vertical_resolution_advisory,
       FmgcComputer_P.BitfromLabel1_bit_c, &rtb_DataTypeConversion1_d);
     rtb_NOT_oj = (rtb_DataTypeConversion1_d == 0U);
@@ -1922,7 +2086,9 @@ void FmgcComputer::step()
       FmgcComputer_P.CompareToConstant_const_lj) || raOwnInvalid) &&
                 (!FmgcComputer_DWork.Delay_DSTATE.armed_modes.land_armed) && rtb_AND10_b);
     rtb_GreaterThan3 = ((!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.land_active) && (rtb_y_me || rtb_y_io));
-    rtb_Compare_ji = !FmgcComputer_U.in.fms_inputs.vertical_flight_plan_valid;
+    finalModeDiagnostics.approachPush = rtb_y_nb;
+    const boolean_T wasFinalArmed = FmgcComputer_DWork.Delay_DSTATE.armed_modes.final_des_armed;
+    const boolean_T finalArmedVerticalProfileInvalid = !FmgcComputer_U.in.fms_inputs.vertical_flight_plan_valid;
     FmgcComputer_MATLABFunction_g((FmgcComputer_DWork.Delay_DSTATE.armed_modes.nav_armed ||
       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active), FmgcComputer_P.PulseNode3_isRisingEdge_k, &rtb_NOT_b,
       &FmgcComputer_DWork.sf_MATLABFunction_bbv);
@@ -1930,20 +2096,41 @@ void FmgcComputer::step()
       FmgcComputer_P.BitfromLabel1_bit_o, &rtb_DataTypeConversion1_d);
     FmgcComputer_MATLABFunction_g((rtb_DataTypeConversion1_d != 0U), FmgcComputer_P.PulseNode1_isRisingEdge_li,
       &rtb_y_me, &FmgcComputer_DWork.sf_MATLABFunction_bk);
-    rtb_Compare_ji = (FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active ||
-                      FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.pitch_goaround_active || rtb_Compare_ji ||
-                      rtb_NOT_b || (rtb_y_nb && FmgcComputer_DWork.Delay_DSTATE.armed_modes.final_des_armed) || rtb_y_me
-                      || rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset ||
-                      FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.tcas_active);
+    const uint32_T finalArmedResetReasons = finalArmedResetReason({
+      .capture = FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active,
+      .goAround = FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.pitch_goaround_active,
+      .verticalProfileInvalid = finalArmedVerticalProfileInvalid,
+      .navFallingEdge = rtb_NOT_b,
+      .approachPush = rtb_y_nb && wasFinalArmed,
+      .localizerPush = rtb_y_me,
+      .commonModeReset = rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset,
+      .tcas = FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.tcas_active,
+    });
+    rtb_Compare_ji = finalArmedResetReasons != 0U;
     FmgcComputer_DWork.Memory_PreviousInput_dv = FmgcComputer_P.Logic_table_c[(((static_cast<uint32_T>(rtb_GreaterThan3)
       << 1) + rtb_Compare_ji) << 1) + FmgcComputer_DWork.Memory_PreviousInput_dv];
+    if (wasFinalArmed && !FmgcComputer_DWork.Memory_PreviousInput_dv) {
+      finalModeDiagnostics.finalArmedLastResetReason = finalArmedResetReasons;
+      finalModeDiagnostics.finalArmedResetCount++;
+    }
     FmgcComputer_MATLABFunction_i(&FmgcComputer_U.in.bus_inputs.fmgc_opp_bus.discrete_word_1,
       FmgcComputer_P.BitfromLabel_bit_a, &rtb_DataTypeConversion1_d);
     rtb_Compare_ji = (rtb_DataTypeConversion1_d != 0U);
     rtb_Compare_ji = (rtb_Compare_ji && rtb_OR2_l);
-    rtb_y_pp = (rtb_Compare_ji || (rtb_y_cb && FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active &&
-      FmgcComputer_DWork.Delay_DSTATE.armed_modes.final_des_armed && FmgcComputer_U.in.fms_inputs.final_app_can_engage &&
-      (FmgcComputer_U.in.fms_inputs.fms_flight_phase == FmgcComputer_P.EnumeratedConstant_Value_i)));
+    const boolean_T finalApproachCaptureValid = isFinalApproachCaptureValid(
+      FmgcComputer_U.in.fms_inputs.vertical_flight_plan_valid,
+      FmgcComputer_U.in.fms_inputs.final_app_can_engage, FmgcComputer_U.in.fms_inputs.selected_approach_type,
+      FmgcComputer_U.in.fms_inputs.fms_flight_phase);
+    const boolean_T finalApproachSustainValid = isFinalApproachSustainValid(
+      FmgcComputer_U.in.fms_inputs.vertical_flight_plan_valid,
+      FmgcComputer_U.in.fms_inputs.final_app_sustain_valid, FmgcComputer_U.in.fms_inputs.selected_approach_type,
+      FmgcComputer_U.in.fms_inputs.fms_flight_phase);
+    const boolean_T wasFinalActive = FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active;
+    const boolean_T finalApproachDeselected = rtb_y_nb &&
+      (wasFinalActive || FmgcComputer_DWork.Delay_DSTATE.armed_modes.final_des_armed);
+    rtb_y_pp = shouldSetFinalApproach(rtb_Compare_ji, finalApproachCaptureValid,
+      rtb_y_cb && FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active &&
+      FmgcComputer_DWork.Delay_DSTATE.armed_modes.final_des_armed, finalApproachDeselected);
     rtb_Compare_ji = (FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.vs_active ||
                       FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.fpa_active ||
                       FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.alt_hold_active ||
@@ -1962,10 +2149,24 @@ void FmgcComputer::step()
                       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.land_active);
     FmgcComputer_MATLABFunction_a(rtb_y_pp, FmgcComputer_U.in.time.dt, FmgcComputer_P.ConfirmNode_isRisingEdge_ha,
       FmgcComputer_P.ConfirmNode_timeDelay_on, &rtb_AND10_b, &FmgcComputer_DWork.sf_MATLABFunction_mm);
-    rtb_Compare_ji = (rtb_Compare_ji && (!rtb_AND10_b));
-    rtb_Compare_ji = (rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset || rtb_Compare_ji);
+    const boolean_T competingLongitudinalMode = rtb_Compare_ji && (!rtb_AND10_b);
+    const uint32_T finalActiveResetReasons = finalActiveResetReason({
+      .commonModeReset = rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset,
+      .competingLongitudinalMode = competingLongitudinalMode,
+      .verticalProfileInvalid = !FmgcComputer_U.in.fms_inputs.vertical_flight_plan_valid,
+      .sustainValidityLost = !FmgcComputer_U.in.fms_inputs.final_app_sustain_valid,
+      .wrongApproachFamily = FmgcComputer_U.in.fms_inputs.selected_approach_type != fmgc_approach_type::RNAV,
+      .wrongFlightPhase = FmgcComputer_U.in.fms_inputs.fms_flight_phase != fmgc_flight_phase::Approach,
+      .approachDeselected = finalApproachDeselected,
+    });
+    rtb_Compare_ji = (rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset || competingLongitudinalMode ||
+      shouldResetFinalApproach(finalApproachSustainValid, finalApproachDeselected));
     FmgcComputer_DWork.Memory_PreviousInput_f = FmgcComputer_P.Logic_table_pl[(((static_cast<uint32_T>(rtb_y_pp) << 1) +
       rtb_Compare_ji) << 1) + FmgcComputer_DWork.Memory_PreviousInput_f];
+    if (wasFinalActive && !FmgcComputer_DWork.Memory_PreviousInput_f) {
+      finalModeDiagnostics.finalActiveLastResetReason = finalActiveResetReasons;
+      finalModeDiagnostics.finalActiveResetCount++;
+    }
     FmgcComputer_MATLABFunction_i(&FmgcComputer_U.in.bus_inputs.fmgc_opp_bus.discrete_word_1,
       FmgcComputer_P.BitfromLabel_bit_cs, &rtb_DataTypeConversion1_d);
     rtb_Compare_ji = (rtb_DataTypeConversion1_d != 0U);
@@ -2034,10 +2235,11 @@ void FmgcComputer::step()
       + rtb_Compare_ji) << 1) + FmgcComputer_DWork.Memory_PreviousInput_el];
     rtb_BusAssignment_cp_logic_ra_computation_data_radio_height_ft.SSM = rtb_raComputationData_radio_height_ft_SSM;
     rtb_BusAssignment_cp_logic_ra_computation_data_radio_height_ft.Data = rtb_raComputationData_radio_height_ft_Data;
-    rtb_Compare_ji = ((!FmgcComputer_U.in.fms_inputs.lateral_flight_plan_valid) ||
-                      (!FmgcComputer_U.in.fms_inputs.nav_capture_condition));
-    rtb_Compare_ji = (FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active && rtb_Compare_ji &&
-                      (!FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active));
+    const boolean_T navCaptureReversion = FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active &&
+      ((!FmgcComputer_U.in.fms_inputs.lateral_flight_plan_valid) ||
+       (!FmgcComputer_U.in.fms_inputs.nav_capture_condition)) &&
+      (!FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active);
+    rtb_Compare_ji = navCaptureReversion;
     FmgcComputer_MATLABFunction_g((FmgcComputer_DWork.Delay_DSTATE.armed_modes.land_armed ||
       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.land_active), FmgcComputer_P.PulseNode3_isRisingEdge_ae, &rtb_y_me,
       &FmgcComputer_DWork.sf_MATLABFunction_ck);
@@ -2064,6 +2266,7 @@ void FmgcComputer::step()
     FmgcComputer_MATLABFunction_g((FmgcComputer_DWork.Delay_DSTATE.armed_modes.final_des_armed ||
       FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active), FmgcComputer_P.PulseNode5_isRisingEdge_c,
       &rtb_NOT_b, &FmgcComputer_DWork.sf_MATLABFunction_d5);
+    const boolean_T fallingFinalEdge = rtb_NOT_b;
     rtb_y_n = (FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_cpt_active ||
                FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_trk_active);
     FmgcComputer_MATLABFunction_g((rtb_DataTypeConversion1_d != 0U), FmgcComputer_P.PulseNode2_isRisingEdge_j, &rtb_y_io,
@@ -2074,15 +2277,17 @@ void FmgcComputer::step()
       FmgcComputer_P.BitfromLabel5_bit_m, &rtb_DataTypeConversion1_d);
     FmgcComputer_MATLABFunction_g((rtb_DataTypeConversion1_d != 0U), FmgcComputer_P.PulseNode1_isRisingEdge_d, &rtb_y_n,
       &FmgcComputer_DWork.sf_MATLABFunction_bqw);
-    rtb_Compare_ji = (rtb_Compare_ji || rtb_y_pp || (rtb_GreaterThan3 && rtb_NOT_b &&
+    const boolean_T fallingFinalReversion = rtb_GreaterThan3 && fallingFinalEdge &&
       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active &&
       ((!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.rwy_active) &&
        (!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.roll_goaround_active) &&
        (!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_cpt_active) &&
        (!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_trk_active) &&
-       (!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.land_active))) || rtb_AND9 ||
-                      (FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active &&
-                       FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active && rtb_y_n));
+       (!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.land_active));
+    pendingNavActiveReversionReason |= navActiveReversionReason(navCaptureReversion, fallingFinalReversion);
+    rtb_Compare_ji = (rtb_Compare_ji || rtb_y_pp || fallingFinalReversion || rtb_AND9 ||
+                       (FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active &&
+                        FmgcComputer_DWork.Delay_DSTATE.longitudinal_modes.final_des_active && rtb_y_n));
     FmgcComputer_MATLABFunction_i(&FmgcComputer_U.in.bus_inputs.fmgc_opp_bus.discrete_word_2,
       FmgcComputer_P.BitfromLabel_bit_cd, &rtb_DataTypeConversion1_d);
     rtb_y_n = (rtb_DataTypeConversion1_d != 0U);
@@ -2181,19 +2386,31 @@ void FmgcComputer::step()
                 ((rtb_y_bb >= FmgcComputer_P.CompareToConstant_const_odr) || raOwnInvalid) &&
                 ((!FmgcComputer_DWork.Delay_DSTATE.lateral_modes.roll_goaround_active) || (rtb_y_bb >=
       FmgcComputer_P.CompareToConstant1_const_hy))));
-    rtb_Compare_ji = !FmgcComputer_U.in.fms_inputs.lateral_flight_plan_valid;
+    const boolean_T wasNavActive = FmgcComputer_DWork.Delay_DSTATE.lateral_modes.nav_active;
+    const boolean_T lateralFlightPlanInvalid = !FmgcComputer_U.in.fms_inputs.lateral_flight_plan_valid;
     FmgcComputer_MATLABFunction_a(rtb_y_n, FmgcComputer_U.in.time.dt, FmgcComputer_P.ConfirmNode_isRisingEdge_fy,
       FmgcComputer_P.ConfirmNode_timeDelay_an, &rtb_NOT_b, &FmgcComputer_DWork.sf_MATLABFunction_hy);
-    rtb_Compare_ji = (rtb_Compare_ji || rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset ||
-                      ((FmgcComputer_DWork.Delay_DSTATE.lateral_modes.rwy_active ||
-                        FmgcComputer_DWork.Delay_DSTATE.lateral_modes.roll_goaround_active ||
-                        FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_cpt_active ||
-                        FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_trk_active ||
-                        FmgcComputer_DWork.Delay_DSTATE.lateral_modes.hdg_active ||
-                        FmgcComputer_DWork.Delay_DSTATE.lateral_modes.trk_active ||
-                        FmgcComputer_DWork.Delay_DSTATE.lateral_modes.land_active) && (!rtb_NOT_b)));
+    const boolean_T competingLateralMode =
+      (FmgcComputer_DWork.Delay_DSTATE.lateral_modes.rwy_active ||
+       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.roll_goaround_active ||
+       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_cpt_active ||
+       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.loc_trk_active ||
+       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.hdg_active ||
+       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.trk_active ||
+       FmgcComputer_DWork.Delay_DSTATE.lateral_modes.land_active) && (!rtb_NOT_b);
+    const uint32_T navActiveResetReasons = navActiveResetReason({
+      .lateralFlightPlanInvalid = lateralFlightPlanInvalid,
+      .commonModeReset = rtb_BusAssignment_m_ap_fd_logic_lateral_mode_reset,
+      .competingLateralMode = competingLateralMode,
+    });
+    rtb_Compare_ji = navActiveResetReasons != 0U;
     FmgcComputer_DWork.Memory_PreviousInput_ly = FmgcComputer_P.Logic_table_i[(((static_cast<uint32_T>(rtb_y_n) << 1) +
       rtb_Compare_ji) << 1) + FmgcComputer_DWork.Memory_PreviousInput_ly];
+    if (wasNavActive && !FmgcComputer_DWork.Memory_PreviousInput_ly) {
+      finalModeDiagnostics.navActiveLastResetReason = navActiveResetReasons | pendingNavActiveReversionReason;
+      finalModeDiagnostics.navActiveResetCount++;
+      pendingNavActiveReversionReason = 0U;
+    }
     FmgcComputer_MATLABFunction_i(&FmgcComputer_U.in.bus_inputs.fmgc_opp_bus.discrete_word_3,
       FmgcComputer_P.BitfromLabel_bit_o, &rtb_DataTypeConversion1_d);
     rtb_Compare_ji = (rtb_DataTypeConversion1_d != 0U);
@@ -3928,6 +4145,10 @@ void FmgcComputer::step()
     rtb_BusAssignment_jmp.ap_fd_logic.armed_modes.clb_armed = FmgcComputer_DWork.Memory_PreviousInput_ma;
     rtb_BusAssignment_jmp.ap_fd_logic.armed_modes.des_armed = FmgcComputer_DWork.Memory_PreviousInput_nt;
     rtb_BusAssignment_jmp.ap_fd_logic.armed_modes.tcas_armed = FmgcComputer_DWork.Memory_PreviousInput_n0;
+    finalModeDiagnostics.finalArmed = FmgcComputer_DWork.Memory_PreviousInput_dv;
+    finalModeDiagnostics.finalActive = FmgcComputer_DWork.Memory_PreviousInput_f;
+    finalModeDiagnostics.navArmed = FmgcComputer_DWork.Memory_PreviousInput_j;
+    finalModeDiagnostics.navActive = FmgcComputer_DWork.Memory_PreviousInput_ly;
     rtb_BusAssignment_jmp.ap_fd_logic.auto_spd_control_active = FmgcComputer_DWork.Memory_PreviousInput_hk;
     rtb_BusAssignment_jmp.ap_fd_logic.manual_spd_control_active = FmgcComputer_DWork.Memory_PreviousInput_cu;
     rtb_BusAssignment_jmp.ap_fd_logic.mach_control_active = FmgcComputer_DWork.Delay_DSTATE_c;
@@ -5043,11 +5264,19 @@ void FmgcComputer::step()
     FmgcComputer_DWork.Delay_DSTATE_f = FmgcComputer_DWork.Delay_DSTATE_l;
   } else {
     FmgcComputer_DWork.Runtime_MODE = false;
+    finalModeDiagnostics.commonModeReset = false;
+    finalModeDiagnostics.approachPush = false;
+    finalModeDiagnostics.finalArmed = false;
+    finalModeDiagnostics.finalActive = false;
+    finalModeDiagnostics.navArmed = false;
+    finalModeDiagnostics.navActive = false;
   }
 }
 
 void FmgcComputer::initialize()
 {
+  finalModeDiagnostics = {};
+  pendingNavActiveReversionReason = 0U;
   FmgcComputer_DWork.Delay_DSTATE = FmgcComputer_P.Delay_InitialCondition;
   FmgcComputer_DWork.Delay_DSTATE_p = FmgcComputer_P.Delay_InitialCondition_g;
   FmgcComputer_DWork.Memory_PreviousInput = FmgcComputer_P.SRFlipFlop1_initial_condition;

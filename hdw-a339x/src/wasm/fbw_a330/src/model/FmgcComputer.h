@@ -11,6 +11,21 @@ extern base_fmgc_discrete_outputs rtP_fmgc_discrete_output_MATLABStruct;
 class FmgcComputer final
 {
  public:
+  struct FinalModeDiagnostics {
+    boolean_T commonModeReset;
+    boolean_T approachPush;
+    boolean_T finalArmed;
+    boolean_T finalActive;
+    boolean_T navArmed;
+    boolean_T navActive;
+    uint32_T finalArmedLastResetReason;
+    uint32_T finalActiveLastResetReason;
+    uint32_T navActiveLastResetReason;
+    uint32_T finalArmedResetCount;
+    uint32_T finalActiveResetCount;
+    uint32_T navActiveResetCount;
+  };
+
   struct rtDW_MATLABFunction_FmgcComputer_k_T {
     real_T timeSinceCondition;
     boolean_T output;
@@ -1180,6 +1195,11 @@ class FmgcComputer final
     return FmgcComputer_Y;
   }
 
+  const FinalModeDiagnostics &getFinalModeDiagnostics() const
+  {
+    return finalModeDiagnostics;
+  }
+
   void initialize();
   void step();
   static void terminate();
@@ -1190,6 +1210,8 @@ class FmgcComputer final
   ExternalOutputs_FmgcComputer_T FmgcComputer_Y;
   BlockIO_FmgcComputer_T FmgcComputer_B;
   D_Work_FmgcComputer_T FmgcComputer_DWork;
+  FinalModeDiagnostics finalModeDiagnostics{};
+  uint32_T pendingNavActiveReversionReason = 0U;
   static Parameters_FmgcComputer_T FmgcComputer_P;
   static void FmgcComputer_MATLABFunction(const base_arinc_429 *rtu_u, real32_T rtu_default, real32_T *rty_y);
   static void FmgcComputer_MATLABFunction_j_Reset(rtDW_MATLABFunction_FmgcComputer_k_T *localDW);

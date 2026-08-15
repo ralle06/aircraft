@@ -207,8 +207,9 @@ class FlyByWireInterface {
   std::unique_ptr<LocalVariable> idFmRequestedVerticalMode;
   std::unique_ptr<LocalVariable> idFmTargetAltitude;
   std::unique_ptr<LocalVariable> idFmTargetVerticalSpeed;
-  std::unique_ptr<LocalVariable> idFmRnavAppSelected;
+  std::unique_ptr<LocalVariable> idFmApproachFamily;
   std::unique_ptr<LocalVariable> idFmFinalCanEngage;
+  std::unique_ptr<LocalVariable> idFmFinalSustainValid;
   std::unique_ptr<LocalVariable> idFmNavCaptureCondition;
 
   std::unique_ptr<LocalVariable> idTcasFault;
@@ -537,6 +538,27 @@ class FlyByWireInterface {
   std::unique_ptr<LocalVariable> idAutothrustShimStatus;
   std::unique_ptr<LocalVariable> idAutothrustShimMode;
   std::unique_ptr<LocalVariable> idAutothrustShimModeMessage;
+
+  // Temporary RNAV FINAL lifecycle diagnostics from the priority FMGC.
+  std::unique_ptr<LocalVariable> idDebugFinalCanEngageLive;
+  std::unique_ptr<LocalVariable> idDebugFinalSustainValidLive;
+  std::unique_ptr<LocalVariable> idDebugFinalArmedLive;
+  std::unique_ptr<LocalVariable> idDebugFinalActiveLive;
+  std::unique_ptr<LocalVariable> idDebugNavArmedLive;
+  std::unique_ptr<LocalVariable> idDebugNavActiveLive;
+  std::unique_ptr<LocalVariable> idDebugNavCaptureConditionLive;
+  std::unique_ptr<LocalVariable> idDebugCommonModeResetLive;
+  std::unique_ptr<LocalVariable> idDebugApproachPushLive;
+  std::unique_ptr<LocalVariable> idDebugFinalArmedLastResetReason;
+  std::unique_ptr<LocalVariable> idDebugFinalActiveLastResetReason;
+  std::unique_ptr<LocalVariable> idDebugNavActiveLastResetReason;
+  std::unique_ptr<LocalVariable> idDebugFinalArmedLastResetFmgc;
+  std::unique_ptr<LocalVariable> idDebugFinalActiveLastResetFmgc;
+  std::unique_ptr<LocalVariable> idDebugNavActiveLastResetFmgc;
+  std::unique_ptr<LocalVariable> idDebugFmgcPriorityIndex;
+  uint32_T debugFinalArmedResetCount[2] = {};
+  uint32_T debugFinalActiveResetCount[2] = {};
+  uint32_T debugNavActiveResetCount[2] = {};
 
   // FMGC discrete output Lvars
   std::unique_ptr<LocalVariable> idFmgcHealthy[2];
